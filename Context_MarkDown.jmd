@@ -1,0 +1,216 @@
+---
+title : Context Awarness
+author : Ben Sivan
+date: `j import Dates; Dates.Date(Dates.now())`
+---
+
+Context Awarness dataset from kaggle.com
+
+In this wark, the objective is to predict the activity one is doing based on the data recorded from the sensors in smart watch.
+
+```julia; echo = false
+# libraries
+
+using Dates, CSV, DataFrames, DataFramesMeta, Statistics, Plots, StatsPlots, StatsBase, Flux, Zygote
+```
+The dataset is sorted as such: 30 directories, one per participants, each contains 10 CSV files one per activity.
+Each CSV file is sorted as such:  28 columns that represents a sensor, eather raw data or calibrated data. 14 sensors overall.
+
+RAW stands for Raw data
+CAL stands for calibrated data
+
+Column1		Timestamp RAW no units
+Column2		Timestamp CAL mSecs
+Column3		Low Noise Accelerometer X RAW no units
+Column4		Low Noise Accelerometer X CAL m/(sec^2)*
+Column5 	Low Noise Accelerometer Y RAW no units
+Column6		Low Noise Accelerometer Y CAL m/(sec^2)*
+Column7		Low Noise Accelerometer Z RAW no units
+Column8		Low Noise Accelerometer Z CAL m/(sec^2)*
+Column9		Wide Range Accelerometer X RAW no units
+Column10	Wide Range Accelerometer X CAL m/(sec^2)*
+Column11	Wide Range Accelerometer Y RAW no units
+Column12	Wide Range Accelerometer Y CAL m/(sec^2)*
+Column13	Wide Range Accelerometer Z RAW no units 
+Column14	Wide Range Accelerometer Z CAL m/(sec^2)*
+Column15	Gyroscope X RAW no units
+Column16	Gyroscope X CAL deg/sec*
+Column17	Gyroscope Y RAW no units
+Column18	Gyroscope Y CAL deg/sec*
+Column19	Gyroscope Z RAW no units
+Column20	Gyroscope Z CAL deg/sec*
+Column21	Magnetometer X RAW no units
+Column22	Magnetometer X CAL local*
+Column23	Magnetometer Y RAW no units
+Column24	Magnetometer Y CAL local*
+Column25	Magnetometer Z RAW no units
+Column26	Magnetometer Z CAL local*
+Column27	VSenseBatt no units
+Column28	VSenseBatt mVolts
+
+```julia; echo = false
+# load data
+## participants names
+cd("..")
+Participants = readdir("RawData")
+
+## activities names
+Activities = readdir("RawData/"*Participants[1])
+filter!(e->e != ".ipynb_checkpoints",Activities)
+for i in 1:length(Activities)
+    Activities[i] = split(Activities[i], ".")[1]
+    Activities[i] = split(Activities[i], Participants[1])[2]
+end
+
+## activities names in english
+Activities_Eng = ["cleaning window","chopping","writing with a pen","eating soup","using a computer mouse","writing with a keyboard","cleaning table","drinking water","using a tablet computer","kneading dough"]
+
+## file names
+files = []
+for i in 1:length(Participants)
+    for j in 1:length(Activities)
+        append!(files,[Participants[i]*"/"*Participants[i]*Activities[j]*".csv"])
+    end
+end
+
+## sort all in dictionary
+Back_Data = Dict("Activities" => Activities,
+                 "Activities_Eng" => Activities_Eng,
+                 "Participants" => Participants,
+                 "files" => files)
+          
+## compress all the dataset into one table
+if !("All_Data.csv" in readdir("Others"))
+    All_Data = DataFrame()
+    Row_Num = Int[]
+    for file in files
+        data = CSV.read(file,DataFrame,header = false)
+        print(file)
+        append!(All_Data,data[:,1:28]) # only numeric columns
+        append!(Row_Num,nrow(data))
+    end
+    CSV.write("All_Data.csv", All_Data)
+end
+
+
+# All_Sort DataFrame
+if !("All_Sort.csv" in readdir("Others"))
+    Participant = []
+    i = 1
+    for (cnt,Nrow) in zip(1:length(Row_Num),Row_Num)  
+        append!(Participant,vcat(fill.(Participants[i], length(["x","y","z"])*Nrow)...))
+        if cnt % length(Activities) == 0
+            i += 1
+        end
+    end
+
+    Activity = []
+    i = 1
+    for Nrow in Row_Num  
+        append!(Activity,vcat(fill(Activities_Eng[i], length(["x","y","z"])*Nrow)...))
+        if i < length(Activities)
+            i += 1
+        else
+            i = 1
+        end
+    end
+
+    Activity_Num = []
+    i = 1
+    Act_Num = 1:length(Activities_Eng)
+    for Nrow in Row_Num  
+        append!(Activity_Num,vcat(fill(Act_Num[i], length(["x","y","z"])*Nrow)...))
+        if i < length(Activities)
+            i += 1
+        else
+            i = 1
+        end
+    end
+
+    Axis = []
+    for Nrow in Row_Num  
+        append!(Axis, vcat(fill.(["x","y","z"], Nrow)...))
+    end
+
+    Axis_Num = []
+    for Nrow in Row_Num  
+        append!(Axis_Num, vcat(fill.([1,2,3], Nrow)...))
+    end
+
+    Low_Noise = [All_Data[row,column] for column in [4,6,8] for row in 1:nrow(All_Data)]
+    Wide_Range = [All_Data[row,column] for column in [10,12,14] for row in 1:nrow(All_Data)]
+    Gyroscope = [All_Data[row,column] for column in [16,18,20] for row in 1:nrow(All_Data)]
+    Magnetometer = [All_Data[row,column] for column in [22,24,26] for row in 1:nrow(All_Data)]
+
+    Timestamp = []
+    for Nrow in Row_Num  
+        append!(Timestamp, vcat(fill(All_Data[1:Nrow,2], 3)...))
+    end
+
+    All_Sort = DataFrame(
+                Participant = Participant,
+                Activity = Activity,
+                Activity_Num = Activity_Num,
+                Axis = Axis,
+                Axis_Num = Axis_Num,
+                Low_Noise = Low_Noise,
+                Wide_Range = Wide_Range,
+                Gyroscope = Gyroscope,
+                Magnetometer = Magnetometer,
+                Timestamp = Timestamp
+    )
+
+    CSV.write("Others/All_Sort.csv", All_Sort)
+end
+
+All_Sort = CSV.read("Others/All_Sort.csv", DataFrame)
+
+Sensors = ["Low_Noise","Wide_Range","Gyroscope","Magnetometer"]
+
+All_Sort_summary = DataFrame(Activity = String[], Axis = String[], Sensor = String[], Avg = Float64[], Std = Float64[])
+for act in unique(All_Sort.Activity)
+    per_act = @where(All_Sort, :Activity .== act)
+    for axis in unique(All_Sort.Axis)
+        per_axis = @where(per_act, :Axis .== axis)
+        for sensor in Sensors
+            m = mean(per_axis[!,sensor])
+            s = std(per_axis[!,sensor])
+            push!(All_Sort_summary, (act,axis,sensor,m,s))
+        end
+    end
+end
+
+@df All_Sort_summary density(:Avg, group = :Activity, grid = false, legend = :topleft)
+
+
+
+Max_plot = @df Israel_Climate_Max_temp plot(:Year, :Max, ribbon = :Std, grid = false, label = "Max temp")
+Min_plot = @df Israel_Climate_Min_temp plot(:Year, :Min, ribbon = :Std, grid = false, label = "Min temp")
+
+plot(Max_plot,Min_plot, layout = (2,1))
+
+
+Participants = unique(All_Sort.Participant)
+Activities = unique(All_Sort.Activity)
+Axis = unique(All_Sort.Axis)
+Names = names(All_Sort)
+
+ColumnNames = []
+for D in ["Avg","Std"]
+    for axis in Axis
+        for name in Names[6:9]
+            append!(ColumnNames, [D*"_"*name*"_"*axis])
+        end
+    end
+end
+
+```
+
+plot correletion matrix to find good identifiers for the activity prediction model.
+
+
+```julia; echo = false
+
+@df All_Data corrplot(cols([4:6]), grid = false)
+
+```
